@@ -14,6 +14,14 @@ parameters:
     type: boolean
     default: false
     displayName: 'Enable ESRP code signing'
+  - name: 'github'
+    type: boolean
+    default: false
+    displayName: 'Enable GitHub release publishing'
+  - name: 'nuget'
+    type: boolean
+    default: false
+    displayName: 'Enable NuGet package publishing'
 
 #
 # 1ES Pipeline Templates do not allow using a matrix strategy so we create
@@ -61,6 +69,10 @@ variables:
     value: '1ESGitClient-ESRP-App'
   - name: 'esrpMIConnectionName'
     value: '1ESGitClient-ESRP-MI'
+  - name: 'githubConnectionName'
+    value: 'GitHub-GitCredentialManager'
+  - name: 'nugetConnectionName'
+    value: '1ESGitClient-NuGet'
   # ESRP signing variables set in the pipeline settings:
   # - esrpEndpointUrl
   # - esrpClientId
@@ -669,3 +681,98 @@ extends:
                         "Parameters": {}
                       }
                     ]
+
+      - stage: release
+        displayName: 'Release'
+        dependsOn: [prebuild, build]
+        condition: and(succeeded(), or(eq('${{ parameters.github }}', true), eq('${{ parameters.nuget }}', true)))
+        jobs:
+          - job: github
+            displayName: 'Publish GitHub release'
+            condition: and(succeeded(), eq('${{ parameters.github }}', true))
+            pool:
+              name: GitClientPME-1ESHostedPool-intel-pc
+              image: ubuntu-x86_64-ado1es
+              os: linux
+            variables:
+              version: $[stageDependencies.prebuild.vars.outputs['version.value']]
+            templateContext:
+              type: releaseJob
+              isProduction: true
+              inputs:
+                # Installers and packages
+                - input: pipelineArtifact
+                  artifactName: 'win-x86_installers'
+                  targetPath: $(Pipeline.Workspace)/assets/win-x86
+                - input: pipelineArtifact
+                  artifactName: 'osx-x64_installers'
+                  targetPath: $(Pipeline.Workspace)/assets/osx-x64
+                - input: pipelineArtifact
+                  artifactName: 'osx-arm64_installers'
+                  targetPath: $(Pipeline.Workspace)/assets/osx-arm64
+                - input: pipelineArtifact
+                  artifactName: 'linux-x64_installers'
+                  targetPath: $(Pipeline.Workspace)/assets/linux-x64
+                - input: pipelineArtifact
+                  artifactName: 'nuget_packages'
+                  targetPath: $(Pipeline.Workspace)/assets/nuget
+                - input: pipelineArtifact
+                  artifactName: 'win-x86_symbols'
+                  targetPath: $(Pipeline.Workspace)/symbols/win-x86
+                - input: pipelineArtifact
+                  artifactName: 'osx-x64_symbols'
+                  targetPath: $(Pipeline.Workspace)/symbols/osx-x64
+                - input: pipelineArtifact
+                  artifactName: 'osx-arm64_symbols'
+                  targetPath: $(Pipeline.Workspace)/symbols/osx-arm64
+                - input: pipelineArtifact
+                  artifactName: 'linux-x64_symbols'
+                  targetPath: $(Pipeline.Workspace)/symbols/linux-x64
+            steps:
+              - task: GitHubRelease@1
+                displayName: 'Create Draft GitHub Release'
+                condition: and(succeeded(), eq('${{ parameters.github }}', true))
+                inputs:
+                  gitHubConnection: $(githubConnectionName)
+                  repositoryName: git-ecosystem/git-credential-manager
+                  tag: 'v$(version)'
+                  tagSource: userSpecifiedTag
+                  target: release
+                  title: 'GCM $(version)'
+                  isDraft: true
+                  addChangeLog: false
+                  assets: |
+                    $(Pipeline.Workspace)/assets/win-x86/*.exe
+                    $(Pipeline.Workspace)/assets/osx-x64/*.pkg
+                    $(Pipeline.Workspace)/assets/osx-arm64/*.pkg
+                    $(Pipeline.Workspace)/assets/linux-x64/deb/*.deb
+                    $(Pipeline.Workspace)/assets/linux-x64/tar/*.tar.gz
+                    $(Pipeline.Workspace)/assets/nuget/*.nupkg
+                    $(Pipeline.Workspace)/symbols/win-x86/*.zip
+                    $(Pipeline.Workspace)/symbols/osx-x64/*.tar.gz
+                    $(Pipeline.Workspace)/symbols/osx-arm64/*.tar.gz
+                    $(Pipeline.Workspace)/symbols/linux-x64/*.tar.gz
+
+          - job: nuget
+            displayName: 'Publish NuGet package'
+            condition: and(succeeded(), eq('${{ parameters.nuget }}', true))
+            pool:
+              name: GitClientPME-1ESHostedPool-intel-pc
+              image: ubuntu-x86_64-ado1es
+              os: linux
+            variables:
+              version: $[stageDependencies.prebuild.vars.outputs['version.value']]
+            templateContext:
+              inputs:
+                - input: pipelineArtifact
+                  artifactName: 'nuget_packages'
+                  targetPath: $(Pipeline.Workspace)/assets/nuget
+              outputs:
+                - output: nuget
+                  condition: and(succeeded(), eq('${{ parameters.nuget }}', true))
+                  displayName: 'Publish .NET Tool NuGet package'
+                  packagesToPush: $(Pipeline.Workspace)/assets/nuget/*.nupkg
+                  packageParentPath: $(Pipeline.Workspace)/assets/nuget
+                  nuGetFeedType: external
+                  publishPackageMetadata: true
+                  publishFeedCredentials: $(nugetConnectionName)
