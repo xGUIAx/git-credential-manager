@@ -271,8 +271,8 @@ extends:
                     targetPath: '$(Build.ArtifactStagingDirectory)/symbols'
                     artifactName: '${{ dim.runtime }}_symbols'
                   - output: pipelineArtifact
-                    targetPath: '$(Build.ArtifactStagingDirectory)/installers'
-                    artifactName: '${{ dim.runtime }}_installers'
+                    targetPath: '$(Build.ArtifactStagingDirectory)/installer'
+                    artifactName: '${{ dim.runtime }}_installer'
               steps:
                 - checkout: self
                 - task: UseDotNet@2
@@ -408,7 +408,7 @@ extends:
                       --version="$(version)" \
                       --runtime="${{ dim.runtime }}" \
                       --package-path="$(Build.ArtifactStagingDirectory)/pkg" \
-                      --output="$(Build.ArtifactStagingDirectory)/installers/gcm-${{ dim.runtime }}-$(version).pkg"
+                      --output="$(Build.ArtifactStagingDirectory)/installer/gcm-${{ dim.runtime }}-$(version).pkg"
                 # ESRP code signing for macOS requires the files be packaged in a zip file first
                 - task: Bash@3
                   displayName: 'Prepare installer package for signing'
@@ -416,8 +416,8 @@ extends:
                     targetType: inline
                     script: |
                       mkdir -p $(Build.ArtifactStagingDirectory)/tosign
-                      cd $(Build.ArtifactStagingDirectory)/installers
-                      zip -rX $(Build.ArtifactStagingDirectory)/tosign/installers.zip *.pkg
+                      cd $(Build.ArtifactStagingDirectory)/installer
+                      zip -rX $(Build.ArtifactStagingDirectory)/tosign/installer.zip *.pkg
                 - task: EsrpCodeSigning@5
                   condition: and(succeeded(), eq('${{ parameters.esrp }}', true))
                   displayName: 'Sign installer package'
@@ -443,6 +443,13 @@ extends:
                           "Parameters": {}
                         }
                       ]
+                # Extract signed installer
+                - task: Bash@3
+                  displayName: 'Extract signed installer package'
+                  inputs:
+                    targetType: inline
+                    script: |
+                      unzip -uo $(Build.ArtifactStagingDirectory)/tosign/installer.zip -d $(Build.ArtifactStagingDirectory)/installer
                 - task: EsrpCodeSigning@5
                   condition: and(succeeded(), eq('${{ parameters.esrp }}', true))
                   displayName: 'Notarize installer package'
@@ -454,8 +461,8 @@ extends:
                     authAkvName: '$(esrpKeyVaultName)'
                     authSignCertName: '$(esrpSignReqCertName)'
                     serviceEndpointUrl: '$(esrpEndpointUrl)'
-                    folderPath: '$(Build.ArtifactStagingDirectory)/tosign'
-                    pattern: 'installers.zip'
+                    folderPath: '$(Build.ArtifactStagingDirectory)/installer'
+                    pattern: '*.pkg'
                     useMinimatch: true
                     signConfigType: inlineSignParams
                     inlineOperation: |
@@ -470,13 +477,6 @@ extends:
                           }
                         }
                       ]
-                # Extract signed and notarized installer pkg files, overwriting the unsigned files, ready for upload
-                - task: Bash@3
-                  displayName: 'Extract signed installer package'
-                  inputs:
-                    targetType: inline
-                    script: |
-                      unzip -uo $(Build.ArtifactStagingDirectory)/tosign/installers.zip -d $(Build.ArtifactStagingDirectory)/installers
 
           #
           # Linux build jobs
